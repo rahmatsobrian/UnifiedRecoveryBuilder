@@ -247,7 +247,7 @@ jobs:
           echo "Resolved Manifest URL: $URL"
 
       # ── 9a. OrangeFox: Build Environment via script ───────
-      - name: 🦊 OrangeFox: Setup Build Environment
+      - name: 🦊 OrangeFox Setup Build Environment
         if: github.event.inputs.RECOVERY_TYPE == 'OrangeFox'
         run: |
           git clone https://gitlab.com/OrangeFox/misc/scripts.git -b master
@@ -255,7 +255,7 @@ jobs:
           sudo bash setup/android_build_env.sh
 
       # ── 9b. OrangeFox: Sync Manifest ──────────────────────
-      - name: 🦊 OrangeFox: Sync Manifest
+      - name: 🦊 OrangeFox Sync Manifest
         if: github.event.inputs.RECOVERY_TYPE == 'OrangeFox'
         run: |
           mkdir -p ${GITHUB_WORKSPACE}/OrangeFox
@@ -356,7 +356,7 @@ jobs:
           fi
 
       # ── 13. PBRP: Fix Missing Fonts ───────────────────────
-      - name: 🔤 PBRP: Fix Missing Fonts
+      - name: 🔤 PBRP Fix Missing Fonts
         if: github.event.inputs.RECOVERY_TYPE == 'PBRP'
         working-directory: android-recovery
         continue-on-error: true
@@ -366,7 +366,7 @@ jobs:
           unzip -o missing-font.zip
 
       # ── 14. Legacy: Switch Python ─────────────────────────
-      - name: 🐍 Legacy: Setup Python 2
+      - name: 🐍 Legacy Setup Python 2
         if: github.event.inputs.RECOVERY_TYPE == 'TWRP-Legacy'
         continue-on-error: true
         run: |
