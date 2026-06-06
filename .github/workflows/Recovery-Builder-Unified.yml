@@ -1,0 +1,564 @@
+name: 🛠️ Unified Recovery Builder
+
+# ============================================================
+# Unified Recovery Builder by Siroha / ReLIFE Project
+# Supports: TWRP · OrangeFox · PBRP · Legacy (omni/twrp-7~9)
+# Merged from Action-TWRP-Builder & Custom-Recovery-Builder
+# ============================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+
+      # ─── Recovery Type ─────────────────────────────────────
+      RECOVERY_TYPE:
+        description: '🔧 Recovery Type'
+        required: true
+        default: 'TWRP'
+        type: choice
+        options:
+          - TWRP
+          - OrangeFox
+          - PBRP
+          - TWRP-Legacy
+
+      # ─── Manifest ──────────────────────────────────────────
+      MANIFEST_BRANCH:
+        description: |
+          🌿 Manifest Branch
+          TWRP:       twrp-12.1 | twrp-11 | twrp-9.0
+          OrangeFox:  12.1 | 11.0
+          PBRP:       android-12.1 | android-11.0
+          Legacy:     twrp-7.1 | twrp-8.1 | twrp-9.0 | omni-7.1 | omni-8.1
+        required: true
+        default: 'twrp-12.1'
+
+      MANIFEST_URL:
+        description: |
+          🔗 Manifest URL (optional override)
+          Leave blank untuk auto-detect dari Recovery Type + Branch.
+          Isi manual jika pakai fork/mirror/SSH: git@github.com:user/manifest
+        required: false
+        default: ''
+
+      # ─── Device Tree ───────────────────────────────────────
+      DEVICE_TREE:
+        description: '📱 Device Tree URL'
+        required: true
+        default: 'https://github.com/TeamWin/android_device_asus_I003D'
+
+      DEVICE_TREE_BRANCH:
+        description: '🌿 Device Tree Branch'
+        required: true
+        default: 'android-12.1'
+
+      DEVICE_PATH:
+        description: '📂 Device Path (e.g. device/xiaomi/vince)'
+        required: true
+        default: 'device/asus/I003D'
+
+      DEVICE_NAME:
+        description: '📛 Device Codename (e.g. vince)'
+        required: true
+        default: 'I003D'
+
+      # ─── Common Tree (optional) ────────────────────────────
+      COMMON_TREE_URL:
+        description: '🔗 Common Tree URL (optional, leave blank if none)'
+        required: false
+        default: ''
+
+      COMMON_PATH:
+        description: '📂 Common Tree Path (optional, leave blank if none)'
+        required: false
+        default: ''
+
+      # ─── Build ─────────────────────────────────────────────
+      BUILD_TARGET:
+        description: '🎯 Build Target'
+        required: true
+        default: 'recovery'
+        type: choice
+        options:
+          - recovery
+          - boot
+          - vendorboot
+
+      MAKEFILE_NAME:
+        description: |
+          📄 Makefile Name (optional override)
+          Kosongkan = auto-detect (twrp_/omni_/pb_/recovery_).
+          Isi manual jika prefix non-standar, e.g. "twrp_vince"
+        required: false
+        default: ''
+
+      # ─── Extras ────────────────────────────────────────────
+      USE_CCACHE:
+        description: '⚡ Enable ccache (faster rebuild)'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+      SWAP_SIZE_GB:
+        description: '💾 Swap size (GB) — recommended 12–24'
+        required: true
+        default: '24'
+
+      LDCHECK_PATH:
+        description: |
+          🔍 LDCheck blob path (optional)
+          e.g. system/bin/qseecomd
+          Kosongkan = skip LDCheck.
+        required: false
+        default: ''
+
+      # ─── Telegram ──────────────────────────────────────────
+      TELEGRAM_NOTIFY:
+        description: '📢 Send Telegram notification on done'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+# ============================================================
+jobs:
+  build:
+    name: 🔨 Build ${{ github.event.inputs.RECOVERY_TYPE }} | ${{ github.event.inputs.DEVICE_NAME }}
+    runs-on: ${{ (github.event.inputs.RECOVERY_TYPE == 'TWRP-Legacy') && 'ubuntu-20.04' || (github.event.inputs.MANIFEST_BRANCH == 'twrp-9.0') && 'ubuntu-22.04' || 'ubuntu-22.04' }}
+    if: github.event.repository.owner.id == github.event.sender.id
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TZ: Asia/Jakarta
+    permissions:
+      contents: write
+
+    steps:
+
+      # ── 0. Display Inputs ─────────────────────────────────
+      - name: 📋 Display Build Parameters
+        run: |
+          echo "::group::Build Configuration"
+          echo "Recovery Type  : ${{ github.event.inputs.RECOVERY_TYPE }}"
+          echo "Manifest Branch: ${{ github.event.inputs.MANIFEST_BRANCH }}"
+          echo "Device Tree    : ${{ github.event.inputs.DEVICE_TREE }}"
+          echo "Device Branch  : ${{ github.event.inputs.DEVICE_TREE_BRANCH }}"
+          echo "Device Path    : ${{ github.event.inputs.DEVICE_PATH }}"
+          echo "Device Name    : ${{ github.event.inputs.DEVICE_NAME }}"
+          echo "Build Target   : ${{ github.event.inputs.BUILD_TARGET }}.img"
+          echo "ccache         : ${{ github.event.inputs.USE_CCACHE }}"
+          echo "Swap Size      : ${{ github.event.inputs.SWAP_SIZE_GB }} GB"
+          echo "::endgroup::"
+
+      # ── 1. Checkout ───────────────────────────────────────
+      - name: 🔄 Checkout Repository
+        uses: actions/checkout@v4
+
+      # ── 2. Cleanup ────────────────────────────────────────
+      - name: 🧹 Cleanup Runner
+        uses: rokibhasansagar/slimhub_actions@main
+
+      # ── 3. Swap Space ─────────────────────────────────────
+      - name: 💾 Set Swap Space
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: ${{ github.event.inputs.SWAP_SIZE_GB }}
+
+      # ── 4. Environment ────────────────────────────────────
+      - name: 🛠️ Install Build Dependencies
+        run: |
+          sudo apt update && sudo apt upgrade -y
+          # Common packages for modern branches
+          if [[ "${{ github.event.inputs.RECOVERY_TYPE }}" == "TWRP-Legacy" ]]; then
+            # Legacy (Ubuntu 20.04) package list
+            DEBIAN_FRONTEND=noninteractive sudo apt install -yq \
+              gperf gcc-multilib gcc-10-multilib g++-multilib g++-10-multilib \
+              libc6-dev lib32ncurses5-dev x11proto-core-dev libx11-dev tree lib32z-dev \
+              libgl1-mesa-dev libxml2-utils xsltproc bc ccache lib32readline-dev lib32z1-dev \
+              liblz4-tool libncurses5-dev libsdl1.2-dev libwxgtk3.0-gtk3-dev libxml2 lzop \
+              pngcrush schedtool squashfs-tools imagemagick libbz2-dev lzma ncftp \
+              qemu-user-static libstdc++-10-dev libncurses5 python3 tar
+          else
+            # Modern branches (Ubuntu 22.04+)
+            DEBIAN_FRONTEND=noninteractive sudo apt install -yq \
+              linux-modules-extra-$(uname -r) \
+              gperf gcc-multilib gcc-10-multilib g++-multilib g++-10-multilib \
+              libc6-dev lib32ncurses-dev x11proto-core-dev libx11-dev tree lib32z-dev \
+              libgl1-mesa-dev libxml2-utils xsltproc bc ccache lib32readline-dev lib32z1-dev \
+              liblz4-tool libncurses-dev libsdl1.2-dev build-essential libgtk-3-dev \
+              libglu1-mesa-dev freeglut3-dev git libxml2 lzop pngcrush schedtool \
+              squashfs-tools imagemagick libbz2-dev lzma ncftp qemu-user-static \
+              libstdc++-10-dev libncurses6 python3 tar aria2
+            sudo add-apt-repository universe -y
+            sudo apt install -y libncurses5 libgflags-dev || true
+          fi
+
+      # ── 5. Java ───────────────────────────────────────────
+      - name: ☕ Install OpenJDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: ${{ (github.event.inputs.MANIFEST_BRANCH == 'twrp-9.0' || github.event.inputs.RECOVERY_TYPE == 'TWRP-Legacy') && '8' || '11' }}
+
+      # ── 6. SSH Keys (optional) ────────────────────────────
+      - name: 🔑 Setup SSH Keys
+        if: |
+          startsWith(github.event.inputs.MANIFEST_URL, 'git@github.com') ||
+          startsWith(github.event.inputs.DEVICE_TREE, 'git@github.com') ||
+          startsWith(github.event.inputs.COMMON_TREE_URL, 'git@github.com')
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      # ── 7. Install repo tool ──────────────────────────────
+      - name: 📦 Install repo
+        run: |
+          mkdir -p ~/bin
+          curl -s https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
+          sudo ln -sf ~/bin/repo /usr/bin/repo
+
+      # ── 8. Resolve Manifest URL ───────────────────────────
+      - name: 🔍 Resolve Manifest URL
+        id: manifest_url
+        run: |
+          RECOVERY="${{ github.event.inputs.RECOVERY_TYPE }}"
+          BRANCH="${{ github.event.inputs.MANIFEST_BRANCH }}"
+          CUSTOM="${{ github.event.inputs.MANIFEST_URL }}"
+
+          if [[ -n "$CUSTOM" ]]; then
+            URL="$CUSTOM"
+          elif [[ "$RECOVERY" == "OrangeFox" ]]; then
+            URL="ofox_sync"  # OrangeFox uses its own sync script
+          elif [[ "$RECOVERY" == "PBRP" ]]; then
+            URL="https://github.com/PitchBlackRecoveryProject/manifest_pb.git"
+          elif [[ "$BRANCH" == "twrp-11" || "$BRANCH" == "twrp-12.1" ]]; then
+            URL="https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git"
+          else
+            # twrp-9.0, twrp-8.1, twrp-7.1, legacy omni branches
+            URL="https://github.com/minimal-manifest-twrp/platform_manifest_twrp_omni.git"
+          fi
+
+          echo "MANIFEST_URL=$URL" >> $GITHUB_OUTPUT
+          echo "Resolved Manifest URL: $URL"
+
+      # ── 9a. OrangeFox: Build Environment via script ───────
+      - name: 🦊 OrangeFox: Setup Build Environment
+        if: github.event.inputs.RECOVERY_TYPE == 'OrangeFox'
+        run: |
+          git clone https://gitlab.com/OrangeFox/misc/scripts.git -b master
+          cd scripts
+          sudo bash setup/android_build_env.sh
+
+      # ── 9b. OrangeFox: Sync Manifest ──────────────────────
+      - name: 🦊 OrangeFox: Sync Manifest
+        if: github.event.inputs.RECOVERY_TYPE == 'OrangeFox'
+        run: |
+          mkdir -p ${GITHUB_WORKSPACE}/OrangeFox
+          cd ${GITHUB_WORKSPACE}/OrangeFox
+          git config --global user.name "${{ github.actor }}"
+          git config --global user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
+          git clone https://gitlab.com/OrangeFox/sync.git -b master
+          cd sync
+          ./orangefox_sync.sh --branch ${{ github.event.inputs.MANIFEST_BRANCH }} \
+            --path ${GITHUB_WORKSPACE}/OrangeFox/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
+
+      # ── 9c. TWRP / PBRP / Legacy: Init Repo ──────────────
+      - name: 📂 Initialize Repo
+        if: github.event.inputs.RECOVERY_TYPE != 'OrangeFox'
+        id: workspace
+        run: |
+          mkdir -p android-recovery
+          cd android-recovery
+          git config --global user.name "${{ github.actor }}"
+          git config --global user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
+
+          MANIFEST_URL="${{ steps.manifest_url.outputs.MANIFEST_URL }}"
+          BRANCH="${{ github.event.inputs.MANIFEST_BRANCH }}"
+
+          repo init --depth=1 -u "$MANIFEST_URL" -b "$BRANCH"
+
+          # Fix for twrp-11 / twrp-12.1 gflags external project conflict
+          if [[ "$BRANCH" == "twrp-11" || "$BRANCH" == "twrp-12.1" ]]; then
+            sed -i '/<remove-project name="platform\/external\/gflags"  \/>/d' \
+              .repo/manifests/remove-minimal.xml 2>/dev/null || true
+          fi
+
+          echo "workspace-folder=$(pwd)" >> $GITHUB_OUTPUT
+
+      - name: 🔄 Repo Sync
+        if: github.event.inputs.RECOVERY_TYPE != 'OrangeFox'
+        run: |
+          cd android-recovery
+          repo sync -j$(nproc --all) --force-sync
+
+      # ── 10. Clone Device Tree ─────────────────────────────
+      - name: 📱 Clone Device Tree
+        run: |
+          RECOVERY="${{ github.event.inputs.RECOVERY_TYPE }}"
+          if [[ "$RECOVERY" == "OrangeFox" ]]; then
+            BASE="${GITHUB_WORKSPACE}/OrangeFox/fox_${{ github.event.inputs.MANIFEST_BRANCH }}"
+          else
+            BASE="${GITHUB_WORKSPACE}/android-recovery"
+          fi
+
+          git clone ${{ github.event.inputs.DEVICE_TREE }} \
+            -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} \
+            "${BASE}/${{ github.event.inputs.DEVICE_PATH }}"
+
+          cd "${BASE}/${{ github.event.inputs.DEVICE_PATH }}"
+          echo "COMMIT_ID=$(git rev-parse HEAD)" >> $GITHUB_ENV
+
+      # ── 11. Clone Common Tree (optional) ─────────────────
+      - name: 🔗 Clone Common Tree
+        if: |
+          github.event.inputs.COMMON_TREE_URL != '' &&
+          github.event.inputs.COMMON_PATH != ''
+        run: |
+          RECOVERY="${{ github.event.inputs.RECOVERY_TYPE }}"
+          if [[ "$RECOVERY" == "OrangeFox" ]]; then
+            BASE="${GITHUB_WORKSPACE}/OrangeFox/fox_${{ github.event.inputs.MANIFEST_BRANCH }}"
+          else
+            BASE="${GITHUB_WORKSPACE}/android-recovery"
+          fi
+
+          git clone ${{ github.event.inputs.COMMON_TREE_URL }} \
+            -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} \
+            "${BASE}/${{ github.event.inputs.COMMON_PATH }}"
+
+      # ── 12. Sync Device Dependencies (TWRP-style) ─────────
+      - name: 📦 Sync Device Dependencies
+        if: github.event.inputs.RECOVERY_TYPE != 'OrangeFox'
+        working-directory: android-recovery
+        continue-on-error: true
+        run: |
+          BRANCH="${{ github.event.inputs.MANIFEST_BRANCH }}"
+          DEVICE_PATH="${{ github.event.inputs.DEVICE_PATH }}"
+          DEVICE_NAME="${{ github.event.inputs.DEVICE_NAME }}"
+
+          # Determine dep file prefix (twrp or omni)
+          if [[ "$BRANCH" == "twrp-11" || "$BRANCH" == "twrp-12.1" ]]; then
+            TREE_TYPE="twrp"
+          else
+            TREE_TYPE="omni"
+          fi
+
+          DEP_FILE="$DEVICE_PATH/${TREE_TYPE}.dependencies"
+          if [[ -f "$DEP_FILE" ]]; then
+            bash ${GITHUB_WORKSPACE}/scripts/convert.sh "$DEP_FILE"
+            repo sync -j$(nproc --all) --force-sync
+          else
+            echo "No dependencies file found at $DEP_FILE, skipping."
+          fi
+
+      # ── 13. PBRP: Fix Missing Fonts ───────────────────────
+      - name: 🔤 PBRP: Fix Missing Fonts
+        if: github.event.inputs.RECOVERY_TYPE == 'PBRP'
+        working-directory: android-recovery
+        continue-on-error: true
+        run: |
+          cd external/noto-fonts/other
+          wget -q https://github.com/cd-Crypton/custom-recovery-extras/raw/main/missing-font.zip
+          unzip -o missing-font.zip
+
+      # ── 14. Legacy: Switch Python ─────────────────────────
+      - name: 🐍 Legacy: Setup Python 2
+        if: github.event.inputs.RECOVERY_TYPE == 'TWRP-Legacy'
+        continue-on-error: true
+        run: |
+          sudo apt -y install python2
+          sudo rm -rf /usr/bin/python
+          sudo ln -s /usr/bin/python2 /usr/bin/python
+
+      # ── 15. Auto-detect Makefile ──────────────────────────
+      - name: 📄 Detect Device Makefile
+        id: makefile
+        run: |
+          RECOVERY="${{ github.event.inputs.RECOVERY_TYPE }}"
+          DEVICE_PATH="${{ github.event.inputs.DEVICE_PATH }}"
+          DEVICE_NAME="${{ github.event.inputs.DEVICE_NAME }}"
+          MANUAL="${{ github.event.inputs.MAKEFILE_NAME }}"
+
+          if [[ -n "$MANUAL" ]]; then
+            echo "DEVICE_MAKEFILE=$MANUAL" >> $GITHUB_ENV
+            echo "Makefile (manual): $MANUAL"
+            exit 0
+          fi
+
+          if [[ "$RECOVERY" == "OrangeFox" ]]; then
+            BASE="${GITHUB_WORKSPACE}/OrangeFox/fox_${{ github.event.inputs.MANIFEST_BRANCH }}"
+          else
+            BASE="${GITHUB_WORKSPACE}/android-recovery"
+          fi
+
+          for PREFIX in twrp omni pb recovery lineage; do
+            MK="${BASE}/${DEVICE_PATH}/${PREFIX}_${DEVICE_NAME}.mk"
+            if [[ -f "$MK" ]]; then
+              echo "DEVICE_MAKEFILE=${PREFIX}_${DEVICE_NAME}" >> $GITHUB_ENV
+              echo "Makefile auto-detected: ${PREFIX}_${DEVICE_NAME}"
+              exit 0
+            fi
+          done
+
+          echo "⚠️ WARNING: No makefile found! Build will likely fail."
+          echo "DEVICE_MAKEFILE=twrp_${DEVICE_NAME}" >> $GITHUB_ENV
+
+      # ── 16. Setup ccache ─────────────────────────────────
+      - name: ⚡ Setup ccache
+        if: github.event.inputs.USE_CCACHE == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-${{ github.event.inputs.RECOVERY_TYPE }}-${{ github.event.inputs.DEVICE_NAME }}-${{ github.event.inputs.MANIFEST_BRANCH }}
+          restore-keys: |
+            ccache-${{ github.event.inputs.RECOVERY_TYPE }}-${{ github.event.inputs.DEVICE_NAME }}-
+            ccache-${{ github.event.inputs.RECOVERY_TYPE }}-
+
+      - name: ⚡ Configure ccache
+        if: github.event.inputs.USE_CCACHE == 'true'
+        run: |
+          ccache -M 10G
+          ccache --zero-stats
+          echo "USE_CCACHE=1" >> $GITHUB_ENV
+          echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
+
+      # ── 17. Build ─────────────────────────────────────────
+      - name: 🔨 Build Recovery Image
+        run: |
+          RECOVERY="${{ github.event.inputs.RECOVERY_TYPE }}"
+          TARGET="${{ github.event.inputs.BUILD_TARGET }}"
+          MAKEFILE="${{ env.DEVICE_MAKEFILE }}"
+
+          if [[ "$RECOVERY" == "OrangeFox" ]]; then
+            cd ${GITHUB_WORKSPACE}/OrangeFox/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
+            set +e
+            source build/envsetup.sh
+            export ALLOW_MISSING_DEPENDENCIES=true
+            set -e
+            lunch ${MAKEFILE}-eng && make clean && mka adbd ${TARGET}image -j$(nproc --all)
+
+          elif [[ "$RECOVERY" == "PBRP" ]]; then
+            cd android-recovery
+            source build/envsetup.sh
+            export ALLOW_MISSING_DEPENDENCIES=true
+            lunch ${MAKEFILE}-eng && mka pbrp -j$(nproc --all)
+
+          else
+            # TWRP / TWRP-Legacy
+            cd android-recovery
+            source build/envsetup.sh
+            export ALLOW_MISSING_DEPENDENCIES=true
+            lunch ${MAKEFILE}-eng && make clean && make ${TARGET}image -j$(nproc --all)
+          fi
+
+          echo "✅ Build complete!"
+
+      # ── 18. Set Release Metadata ──────────────────────────
+      - name: 📝 Set Release Metadata
+        run: |
+          echo "BUILD_DATE=$(date +%Y%m%d)" >> $GITHUB_ENV
+          RECOVERY="${{ github.event.inputs.RECOVERY_TYPE }}"
+          DEVICE="${{ github.event.inputs.DEVICE_NAME }}"
+          TARGET="${{ github.event.inputs.BUILD_TARGET }}"
+
+          if [[ "$RECOVERY" == "OrangeFox" ]]; then
+            BASE="OrangeFox/fox_${{ github.event.inputs.MANIFEST_BRANCH }}/out/target/product/${DEVICE}"
+            IMG=$(ls ${BASE}/OrangeFox*.img 2>/dev/null | head -1)
+            ZIP=$(ls ${BASE}/OrangeFox*.zip 2>/dev/null | head -1)
+            [[ -n "$IMG" ]] && echo "MD5_IMG=$(md5sum $IMG | cut -d' ' -f1)" >> $GITHUB_ENV
+            [[ -n "$ZIP" ]] && echo "MD5_ZIP=$(md5sum $ZIP | cut -d' ' -f1)" >> $GITHUB_ENV
+          fi
+
+      # ── 19. LDCheck (optional) ────────────────────────────
+      - name: 🔍 Run LDCheck
+        if: github.event.inputs.LDCHECK_PATH != ''
+        continue-on-error: true
+        run: |
+          DEVICE="${{ github.event.inputs.DEVICE_NAME }}"
+          RECOVERY="${{ github.event.inputs.RECOVERY_TYPE }}"
+
+          if [[ "$RECOVERY" == "OrangeFox" ]]; then
+            ROOT="${GITHUB_WORKSPACE}/OrangeFox/fox_${{ github.event.inputs.MANIFEST_BRANCH }}/out/target/product/${DEVICE}/recovery/root"
+          else
+            ROOT="${GITHUB_WORKSPACE}/android-recovery/out/target/product/${DEVICE}/recovery/root"
+          fi
+
+          cp tools/libneeds "${ROOT}/" 2>/dev/null || true
+          cp tools/ldcheck "${ROOT}/" 2>/dev/null || true
+
+          cd "$ROOT"
+          python3 ldcheck \
+            -p system/lib64:vendor/lib64:system/lib:vendor/lib \
+            -d ${{ github.event.inputs.LDCHECK_PATH }}
+          echo "✅ LDCheck done. Review missing deps above."
+
+      # ── 20. Upload to Release ─────────────────────────────
+      - name: 📤 Upload Recovery to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            android-recovery/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/${{ github.event.inputs.BUILD_TARGET }}.img
+            android-recovery/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/vendor_boot.img
+            android-recovery/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/*.zip
+            android-recovery/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/*vendor*.img
+            OrangeFox/fox_${{ github.event.inputs.MANIFEST_BRANCH }}/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/OrangeFox*.img
+            OrangeFox/fox_${{ github.event.inputs.MANIFEST_BRANCH }}/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/OrangeFox*.zip
+          name: |
+            ${{ github.event.inputs.RECOVERY_TYPE }} | ${{ github.event.inputs.DEVICE_NAME }} | ${{ env.BUILD_DATE }}
+          tag_name: ${{ github.event.inputs.RECOVERY_TYPE }}-${{ github.event.inputs.DEVICE_NAME }}-${{ github.run_id }}
+          body: |
+            ## 🛠️ ${{ github.event.inputs.RECOVERY_TYPE }} Recovery — Unofficial
+
+            | Field | Value |
+            |-------|-------|
+            | **Device** | `${{ github.event.inputs.DEVICE_NAME }}` |
+            | **Recovery** | ${{ github.event.inputs.RECOVERY_TYPE }} |
+            | **Manifest** | `${{ github.event.inputs.MANIFEST_BRANCH }}` |
+            | **Target** | `${{ github.event.inputs.BUILD_TARGET }}.img` |
+            | **Date** | ${{ env.BUILD_DATE }} |
+            | **Builder** | @${{ github.actor }} |
+
+            ### 📦 Sources
+            - 🌿 Device Tree: [${{ github.event.inputs.DEVICE_TREE }}](${{ github.event.inputs.DEVICE_TREE }}/tree/${{ github.event.inputs.DEVICE_TREE_BRANCH }})
+            - 🔗 Commit: [${{ env.COMMIT_ID }}](${{ github.event.inputs.DEVICE_TREE }}/commit/${{ env.COMMIT_ID }})
+
+            ${{ env.MD5_IMG && format('### 🔑 Checksums\n- IMG: `{0}`\n- ZIP: `{1}`', env.MD5_IMG, env.MD5_ZIP) || '' }}
+
+            > ⚠️ **UNOFFICIAL BUILD** — Flash at your own risk!
+          fail_on_unmatched_files: false
+        if: always()
+
+      # ── 21. Telegram Notification (optional) ─────────────
+      - name: 📢 Telegram Notification
+        if: github.event.inputs.TELEGRAM_NOTIFY == 'true' && always()
+        continue-on-error: true
+        run: |
+          STATUS="${{ job.status }}"
+          DEVICE="${{ github.event.inputs.DEVICE_NAME }}"
+          RECOVERY="${{ github.event.inputs.RECOVERY_TYPE }}"
+          DATE="${{ env.BUILD_DATE }}"
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          if [[ "$STATUS" == "success" ]]; then
+            ICON="✅"
+            MSG="${ICON} *Build Sukses!*"$'\n\n'"📱 Device: \`${DEVICE}\`"$'\n'"🔧 Recovery: ${RECOVERY}"$'\n'"📅 Date: ${DATE}"$'\n'"🔗 [Lihat Release](${RUN_URL})"
+          else
+            ICON="❌"
+            MSG="${ICON} *Build Gagal!*"$'\n\n'"📱 Device: \`${DEVICE}\`"$'\n'"🔧 Recovery: ${RECOVERY}"$'\n'"🔗 [Lihat Log](${RUN_URL})"
+          fi
+
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d "text=$MSG" \
+            -d "parse_mode=Markdown" \
+            -d "disable_web_page_preview=true"
+
+      # ── 22. ccache Stats ──────────────────────────────────
+      - name: 📊 ccache Stats
+        if: github.event.inputs.USE_CCACHE == 'true'
+        run: ccache --show-stats
+        continue-on-error: true
